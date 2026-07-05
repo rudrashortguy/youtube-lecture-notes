@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YouTube Lecture Notes</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+body { background: #0f172a; color: #fff; font-family: system-ui, sans-serif; }
+.card { background: rgba(255,255,255,0.06); border-radius: 12px; padding: 16px; }
+input { background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2); padding: 10px; border-radius: 8px; width: 100%; }
+button { background: #3b82f6; color: #fff; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; }
+button:hover { opacity: 0.9; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+.tab { background: none; padding: 8px 16px; border-radius: 8px 8px 0 0; }
+.tab.active { background: rgba(59,130,246,0.3); }
+.flashcard { cursor: pointer; min-height: 100px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useEffect } = React;
+const API = 'http://localhost:8000';
+
+function App() {
+  const [url, setUrl] = useState('');
+  const [taskId, setTaskId] = useState(null);
+  const [status, setStatus] = useState('idle'); // idle, processing, done
+  const [data, setData] = useState(null);
+  const [tab, setTab] = useState('notes');
+  const [cardIdx, setCardIdx] = useState(0);
+  const [flip, setFlip] = useState(false);
+  const [quizAnswers, setQuizAnswers] = useState({});
+  const [quizDone, setQuizDone] = useState(false);
+
+  const start = async () => {
+    setStatus('processing');
+    setTaskId(null);
+    setData(null);
+    const r = await fetch(`${API}/process`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})}).then(r=>r.json());
+    setTaskId(r.task_id);
+  };
+
+  useEffect(() => {
+    if (!taskId) return;
+    const poll = setInterval(async () => {
+      const r = await fetch(`${API}/status/${taskId}`).then(r=>r.json());
+      if (r.status === 'completed') { setData(r.data); setStatus('done'); clearInterval(poll); }
+    }, 1000);
+    return () => clearInterval(poll);
+  }, [taskId]);
+
+  const tabs = [
+    {id:'notes',label:'📝 Notes'},
+    {id:'defs',label:'📖 Definitions'},
+    {id:'quiz',label:'❓ Quiz'},
+    {id:'cards',label:'📇 Flashcards'},
+    {id:'timeline',label:'⏱ Timeline'},
+    {id:'exam',label:'📋 Exam Questions'},
+  ];
+
+  return <div class="max-w-4xl mx-auto p-4">
+    <h1 class="text-2xl font-bold mb-4">🎥 YouTube Lecture Notes</h1>
+    <div class="flex gap-2 mb-4">
+      <input placeholder="https://youtube.com/watch?v=..." value={url} onChange={e=>setUrl(e.target.value)}/>
+      <button onClick={start} disabled={status==='processing'||!url}>{status==='processing'?'Processing...':'Generate'}</button>
+    </div>
+    {status==='processing' && <div class="card text-center"><p>⏳ Processing video... (mock - returns instantly)</p></div>}
+    {status==='done' && data && <div>
+      <h2 class="text-xl font-semibold mb-2">{data.title}</h2>
+      <div class="flex gap-1 mb-4 flex-wrap">
+        {tabs.map(t => <button key={t.id} class={`tab ${tab===t.id?'active':''}`} onClick={()=>setTab(t.id)}>{t.label}</button>)}
+      </div>
+      {tab==='notes' && <div class="card">{data.structured_notes.map((n,i) => <p key={i} class="mb-1"><span class="text-blue-400">[{n.timestamp}]</span> {n.bullet}</p>)}</div>}
+      {tab==='defs' && <div class="card">{data.definitions.map((d,i) => <div key={i} class="mb-2"><strong>{d.term}:</strong> {d.definition}</div>)}</div>}
+      {tab==='quiz' && <div class="card">
+        {data.quiz.map((q,i) => <div key={i} class="mb-3"><p>{q.question}</p>
+          {q.options.map((o,j) => <button key={j}
+            class={`block w-full text-left p-2 rounded mt-1 ${quizAnswers[i]!==undefined ? (j===q.correct_index?'bg-green-700':(quizAnswers[i]===j?'bg-red-700':'bg-gray-700')) : 'bg-gray-700'}`}
+            onClick={() => !quizDone && setQuizAnswers({...quizAnswers,[i]:j})} disabled={quizDone}>{o}</button>)}
+        </div>)}
+        <button onClick={()=>{setQuizDone(true);}}>Check</button>
+      </div>}
+      {tab==='cards' && <div>
+        <div class="card flashcard text-center" onClick={()=>setFlip(!flip)}>
+          <p class="text-lg">{flip ? data.flashcards[cardIdx]?.back : data.flashcards[cardIdx]?.front}</p>
+          <p class="text-sm opacity-60 mt-4">Click to flip</p>
+        </div>
+        <div class="flex gap-2 justify-center mt-2">
+          <button onClick={()=>{setCardIdx(Math.max(0,cardIdx-1));setFlip(false);}} disabled={cardIdx===0}>Prev</button>
+          <span class="p-2">{cardIdx+1}/{data.flashcards.length}</span>
+          <button onClick={()=>{setCardIdx(Math.min(data.flashcards.length-1,cardIdx+1));setFlip(false);}} disabled={cardIdx===data.flashcards.length-1}>Next</button>
+        </div>
+      </div>}
+      {tab==='timeline' && <div class="card">{data.timeline.map((t,i) => <p key={i} class="mb-1"><span class="text-blue-400">[{t.time}]</span> {t.event}</p>)}</div>}
+      {tab==='exam' && <div class="card">{data.exam_questions.map((q,i) => <p key={i} class="mb-2">{i+1}. {q}</p>)}</div>}
+    </div>}
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+</script>
+</body>
+</html>
